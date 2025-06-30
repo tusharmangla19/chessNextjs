@@ -1,5 +1,6 @@
-import { WebSocket } from "ws";
+import type ws from "ws";
 import { Chess } from 'chess.js';
+export type ServerWebSocket = ws;
 export declare const INIT_GAME = "init_game";
 export declare const MOVE = "move";
 export declare const GAME_OVER = "game_over";
@@ -28,27 +29,29 @@ export interface GameOverPayload {
 }
 export interface GameRoom {
     id: string;
-    player1: WebSocket;
-    player2?: WebSocket;
+    player1: ServerWebSocket;
+    player2?: ServerWebSocket;
     game?: MultiplayerGame;
 }
 export interface MultiplayerGame {
-    player1: WebSocket;
-    player2: WebSocket;
+    player1: ServerWebSocket | null;
+    player2: ServerWebSocket | null;
     board: Chess;
     startTime: Date;
     moveCount: number;
+    dbId: string;
+    waitingForOpponent?: boolean;
 }
 export interface SinglePlayerGame {
-    player: WebSocket;
+    player: ServerWebSocket;
     board: Chess;
     startTime: Date;
 }
 export interface GameState {
     games: MultiplayerGame[];
     singlePlayerGames: SinglePlayerGame[];
-    pendingUser: WebSocket | null;
-    users: WebSocket[];
+    pendingUser: ServerWebSocket | null;
+    users: ServerWebSocket[];
     rooms: Map<string, GameRoom>;
 }
 export interface VideoCallMessage {
@@ -60,9 +63,13 @@ export interface VideoCallMessage {
 }
 export interface VideoCall {
     id: string;
-    initiator: WebSocket;
-    receiver?: WebSocket;
+    initiator: ServerWebSocket;
+    receiver?: ServerWebSocket;
     status: 'pending' | 'active' | 'ended';
     startTime: Date;
+}
+export interface WebSocketWithUserId extends ServerWebSocket {
+    userId?: string;
+    clerkId?: string;
 }
 //# sourceMappingURL=game.d.ts.map

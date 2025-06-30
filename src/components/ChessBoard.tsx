@@ -9,9 +9,10 @@ interface ChessBoardProps {
     playerColor: 'white' | 'black' | null;
     moveCount: number;
     isVideoCallActive?: boolean;
+    disableMoves?: boolean;
 }
 
-export const ChessBoard: React.FC<ChessBoardProps> = ({ chess, socket, moveCount, isVideoCallActive = false }) => {
+export const ChessBoard: React.FC<ChessBoardProps> = ({ chess, socket, moveCount, isVideoCallActive = false, disableMoves = false }) => {
     const [from, setFrom] = useState<null | Square>(null);
 
     // Calculate valid moves for UI display only (not for validation)
@@ -53,6 +54,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({ chess, socket, moveCount
     };
 
     const handleSquareClick = (squareRepresentation: Square) => {
+        if (disableMoves) return;
         if (!from) {
             setFrom(squareRepresentation);
         } else {

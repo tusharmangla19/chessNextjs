@@ -1,10 +1,12 @@
 import { useEffect, useState, useRef } from "react"
+import { useUser } from '@clerk/nextjs';
 
 const WS_URL = "ws://localhost:8081";
 
 export const useSocket = () => {
     const [socket, setSocket] = useState<WebSocket | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
+    const { user } = useUser();
 
     useEffect(() => {
         // Only create a new WebSocket if one doesn't exist
@@ -16,6 +18,10 @@ export const useSocket = () => {
             ws.onopen = () => {
                 console.log("WebSocket connected");
                 setSocket(ws);
+                // Send Clerk user ID as auth message
+                if (user?.id) {
+                    ws.send(JSON.stringify({ type: 'auth', clerkId: user.id }));
+                }
             }
 
             ws.onclose = () => {
@@ -40,7 +46,7 @@ export const useSocket = () => {
                 setSocket(null);
             }
         }
-    }, [])
+    }, [user]);
 
     return socket;  
 } 

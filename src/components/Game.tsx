@@ -42,6 +42,7 @@ export const Game = () => {
     const [roomId, setRoomId] = useState('');
     const [createdRoomId, setCreatedRoomId] = useState('');
     const [waitingForOpponent, setWaitingForOpponent] = useState(false);
+    const [opponentConnected, setOpponentConnected] = useState(true);
     const [started, setStarted] = useState(false);
     const [playerColor, setPlayerColor] = useState<'white' | 'black' | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -108,6 +109,25 @@ export const Game = () => {
                             setTimeout(() => setErrorMessage(null), 3000);
                         }
                         break;
+                    case 'resume_game': {
+                        const { color, fen, moveHistory, opponentConnected, waitingForOpponent } = message.payload;
+                        const chess = new Chess();
+                        if (fen) {
+                            chess.load(fen);
+                        } else if (moveHistory && moveHistory.length > 0) {
+                            moveHistory.forEach((m: any) => {
+                                chess.move({ from: m.from, to: m.to, promotion: m.san.endsWith('=Q') ? 'q' : undefined });
+                            });
+                        }
+                        chessRef.current = chess;
+                        setPlayerColor(color);
+                        setStarted(true);
+                        setWaitingForOpponent(!!waitingForOpponent);
+                        setOpponentConnected(!!opponentConnected);
+                        setMoveCount(moveHistory ? moveHistory.length : 0);
+                        setGameMode('multiplayer');
+                        break;
+                    }
                     case GAME_OVER:
                         const winner = message.payload.winner;
                         const reason = message.payload.reason;
@@ -141,6 +161,11 @@ export const Game = () => {
                     case ROOM_NOT_FOUND:
                         setErrorMessage(message.payload.message);
                         setTimeout(() => setErrorMessage(null), 3000);
+                        break;
+                    case 'opponent_left':
+                        setErrorMessage('Opponent left the match.');
+                        setTimeout(() => setErrorMessage(null), 3000);
+                        resetGame();
                         break;
                 }
             } catch (error) {
@@ -223,6 +248,13 @@ export const Game = () => {
     const copyRoomCode = () => {
         if (createdRoomId) {
             navigator.clipboard.writeText(createdRoomId);
+        }
+    };
+
+    const endGame = () => {
+        if (socket) {
+            socket.send(JSON.stringify({ type: 'END_GAME' }));
+            resetGame();
         }
     };
 
@@ -371,6 +403,11 @@ export const Game = () => {
                 <div className={`flex gap-4 ${videoCallState.isInCall ? 'flex-1' : 'flex-1'}`}>
                     {/* Chess Board - Centered */}
                     <div className="flex-1 flex justify-center items-start">
+                        {waitingForOpponent || !opponentConnected ? (
+                            <div className="p-4 text-center text-lg font-semibold text-yellow-700 bg-yellow-100 rounded-lg mb-4">
+                                Waiting for opponent to connect...
+                            </div>
+                        ) : null}
                         <div className={`bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 ${
                             videoCallState.isInCall ? 'p-3' : 'p-4'
                         }`}>
@@ -380,6 +417,7 @@ export const Game = () => {
                                 playerColor={playerColor}
                                 moveCount={moveCount}
                                 isVideoCallActive={videoCallState.isInCall}
+                                disableMoves={waitingForOpponent || !opponentConnected}
                             />
                         </div>
                     </div>
@@ -602,6 +640,15 @@ export const Game = () => {
                                 </div>
                             </CardContent>
                         </Card>
+                    </div>
+                )}
+
+                {/* End Game Button */}
+                {started && gameMode === 'multiplayer' && (
+                    <div className="absolute top-4 left-4 z-40">
+                        <Button onClick={endGame} variant="danger" size="lg">
+                            End Game
+                        </Button>
                     </div>
                 )}
             </div>

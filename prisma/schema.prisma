@@ -6,10 +6,47 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  clerkId       String   @unique // Clerk user ID
+  gamesAsWhite  Game[]   @relation("WhitePlayer")
+  gamesAsBlack  Game[]   @relation("BlackPlayer")
+  createdAt     DateTime @default(now())
+}
+
+model Game {
+  id            String   @id @default(cuid())
+  status        GameStatus
+  playerWhite   User?    @relation("WhitePlayer", fields: [playerWhiteId], references: [id])
+  playerWhiteId String?
+  playerBlack   User?    @relation("BlackPlayer", fields: [playerBlackId], references: [id])
+  playerBlackId String?
+  moves         Move[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+enum GameStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+model Move {
+  id        String   @id @default(cuid())
+  game      Game     @relation(fields: [gameId], references: [id])
+  gameId    String
+  moveNum   Int
+  from      String
+  to        String
+  san       String // Standard Algebraic Notation
+  fen       String // Board state after move
+  createdAt DateTime @default(now())
 }
