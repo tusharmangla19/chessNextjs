@@ -60,27 +60,37 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({ chess, socket, moveCount
     const getSquareClass = (squareRepresentation: Square, i: number, j: number) => {
         const squareSize = isVideoCallActive ? 'w-12 h-12 sm:w-16 sm:h-16' : 'w-12 h-12 sm:w-16 sm:h-16 md:w-20 md:h-20';
         let baseClass = `${squareSize} ${(i+j)%2 === 0 ? 'bg-amber-100' : 'bg-amber-800'} transition-all duration-200 hover:opacity-80`;
+        
+        // Highlight selected piece with a bright yellow ring
         if (from === squareRepresentation) {
-            baseClass += ' ring-4 ring-yellow-400 ring-opacity-75 shadow-lg';
+            baseClass += ' ring-4 ring-yellow-400 ring-opacity-90 shadow-lg scale-105';
         }
+        
+        // Highlight last move with blue ring
         if (lastMove && (lastMove.from === squareRepresentation || lastMove.to === squareRepresentation)) {
             baseClass += ' ring-2 ring-blue-400 ring-opacity-50';
         }
+        
+        // Highlight valid moves
         const validMove = validMoves.find(move => move.to === squareRepresentation);
         if (validMove) {
             const targetPiece = chess.get(squareRepresentation);
             if (targetPiece) {
-                baseClass += ' bg-red-400';
+                // Capturable piece - red background
+                baseClass += ' bg-red-400 bg-opacity-60';
             } else {
+                // Empty square - just add relative positioning for the indicator
                 baseClass += ' relative';
             }
         }
+        
         return baseClass;
     };
 
     const handleSquareClick = (squareRepresentation: Square) => {
         if (disableMoves) return;
         if (pendingPromotion) return; // Block input while promotion is pending
+        
         // Check if it's the player's turn
         const currentTurn = chess.turn() === 'w' ? 'white' : 'black';
         if (playerColor && playerColor !== currentTurn) {
@@ -90,9 +100,26 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({ chess, socket, moveCount
             }
             return;
         }
+
+        // Get the piece on the clicked square
+        const clickedPiece = chess.get(squareRepresentation);
+        const isPlayerPiece = clickedPiece && 
+            ((playerColor === 'white' && clickedPiece.color === 'w') || 
+             (playerColor === 'black' && clickedPiece.color === 'b'));
+
         if (!from) {
-            setFrom(squareRepresentation);
+            // No piece selected yet - select this piece if it's the player's
+            if (isPlayerPiece) {
+                setFrom(squareRepresentation);
+            }
         } else {
+            // A piece is already selected
+            if (isPlayerPiece) {
+                // Clicked on another of player's pieces - select the new piece instead
+                setFrom(squareRepresentation);
+                return;
+            }
+
             // Check if this is a pawn promotion move
             const piece = chess.get(from);
             const isPawn = piece?.type === 'p';
@@ -101,6 +128,8 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({ chess, socket, moveCount
                 setPendingPromotion({ from, to: squareRepresentation });
                 return;
             }
+
+            // Make the move
             socket.send(JSON.stringify({
                 type: MOVE,
                 payload: {
