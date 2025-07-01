@@ -15,6 +15,7 @@ exports.setupMessageHandler = setupMessageHandler;
 exports.resumeActiveGameForUser = resumeActiveGameForUser;
 exports.handleEndGame = handleEndGame;
 exports.validateRoomId = validateRoomId;
+exports.cleanupAllTimeouts = cleanupAllTimeouts;
 const chess_js_1 = require("chess.js");
 const game_1 = require("../types/game");
 const prisma_1 = require("./prisma");
@@ -23,7 +24,9 @@ const END_GAME = 'END_GAME';
 const moveRateLimit = new Map();
 const roomCreationLimit = new Map();
 const disconnectTimeouts = new Map();
-const DISCONNECT_GRACE_MS = 2 * 60 * 1000; // 2 minutes
+const DISCONNECT_GRACE_MS = 1 * 60 * 1000; // 1 minute
+// Simple locking mechanism to prevent race conditions
+let isProcessingState = false;
 /**
  * Creates initial game state
  */
@@ -54,66 +57,129 @@ function addUser(state, socket) {
  * Removes a user from the game state and cleans up associated games
  */
 function removeUser(state, socket) {
-    state.users = state.users.filter(user => user !== socket);
-    // Find all games this user is in
-    const activeGames = state.games.filter(game => game.player1 === socket || game.player2 === socket);
-    for (const game of activeGames) {
-        // Mark this player as disconnected
-        if (game.player1 === socket) {
-            game.player1 = null;
-        }
-        if (game.player2 === socket) {
-            game.player2 = null;
-        }
-        // If both players are disconnected, schedule deletion
-        if (!game.player1 && !game.player2) {
-            // Schedule DB/game cleanup after grace period
+    // Prevent race conditions by ensuring only one state modification at a time
+    if (isProcessingState) {
+        console.log('⚠️ State modification already in progress, queuing...');
+        setTimeout(() => removeUser(state, socket), 100);
+        return;
+    }
+    isProcessingState = true;
+    try {
+        console.log('🔄 removeUser called for socket:', socket.userId || 'unknown');
+        state.users = state.users.filter(user => user !== socket);
+        // Find all games this user is in
+        const activeGames = state.games.filter(game => game.player1 === socket || game.player2 === socket);
+        console.log('📊 Found active games for disconnected user:', activeGames.length);
+        for (const game of activeGames) {
+            console.log('🎮 Processing game:', game.dbId);
+            // Mark this player as disconnected
+            if (game.player1 === socket) {
+                game.player1 = null;
+                console.log('👤 Player 1 disconnected');
+            }
+            if (game.player2 === socket) {
+                game.player2 = null;
+                console.log('👤 Player 2 disconnected');
+            }
+            // Find the remaining connected player (opponent)
+            const opponent = game.player1 || game.player2;
+            if (opponent && opponent.readyState === 1 && typeof opponent.send === 'function') {
+                console.log('📢 Notifying opponent about disconnect');
+                try {
+                    opponent.send(JSON.stringify({
+                        type: 'opponent_disconnected',
+                        payload: { gracePeriodMs: DISCONNECT_GRACE_MS }
+                    }));
+                }
+                catch (error) {
+                    console.error('Error sending disconnect notification:', error);
+                }
+            }
+            // Schedule deletion after grace period (when any player disconnects)
+            console.log('⏰ Player disconnected, scheduling deletion');
             if (!disconnectTimeouts.has(game.dbId)) {
                 const timeout = setTimeout(async () => {
-                    await prisma_1.prisma.move.deleteMany({ where: { gameId: game.dbId } });
-                    await prisma_1.prisma.game.delete({ where: { id: game.dbId } });
+                    console.log('🗑️ Grace period expired, deleting game:', game.dbId);
+                    // Notify any connected players that the game has ended
+                    const allUsers = [game.player1, game.player2].filter(p => p && p.readyState === 1 && typeof p.send === 'function');
+                    for (const user of allUsers) {
+                        if (user) {
+                            try {
+                                user.send(JSON.stringify({
+                                    type: 'game_ended_disconnect',
+                                    payload: { message: "Game ended due to opponent disconnection" }
+                                }));
+                            }
+                            catch (error) {
+                                console.error('Error sending game ended notification:', error);
+                            }
+                        }
+                    }
+                    try {
+                        await prisma_1.prisma.move.deleteMany({ where: { gameId: game.dbId } });
+                        await prisma_1.prisma.game.delete({ where: { id: game.dbId } });
+                    }
+                    catch (error) {
+                        console.error('Error deleting game from database:', error);
+                    }
                     state.games = state.games.filter(g => g.dbId !== game.dbId);
                     disconnectTimeouts.delete(game.dbId);
                 }, DISCONNECT_GRACE_MS);
                 disconnectTimeouts.set(game.dbId, timeout);
             }
         }
-    }
-    state.games = state.games.filter(game => game.player1 !== null || game.player2 !== null);
-    state.singlePlayerGames = state.singlePlayerGames.filter(game => game.player !== socket);
-    // Clean up rooms
-    state.rooms.forEach((room, roomId) => {
-        if (room.player1 === socket || room.player2 === socket) {
-            const opponent = room.player1 === socket ? room.player2 : room.player1;
-            if (opponent) {
-                (0, utils_1.safeSend)(opponent, {
-                    type: game_1.ERROR,
-                    payload: { message: "Opponent disconnected" }
-                });
-            }
-            state.rooms.delete(roomId);
-        }
-    });
-    // Clean up rate limiting and video calls
-    moveRateLimit.delete(socket.toString());
-    roomCreationLimit.delete(socket.toString());
-    if ('videoCalls' in state) {
-        const stateWithVideo = state;
-        stateWithVideo.videoCalls.forEach((call, callId) => {
-            if (call.initiator === socket || call.receiver === socket) {
-                stateWithVideo.videoCalls.delete(callId);
+        // Keep games in memory during grace period, only remove if both players are null
+        // (This allows for reconnection during the grace period)
+        state.games = state.games.filter(game => {
+            // Keep game if at least one player is still connected or if there's an active timeout
+            return (game.player1 !== null || game.player2 !== null) || disconnectTimeouts.has(game.dbId);
+        });
+        state.singlePlayerGames = state.singlePlayerGames.filter(game => game.player !== socket);
+        // Clean up rooms
+        state.rooms.forEach((room, roomId) => {
+            if (room.player1 === socket || room.player2 === socket) {
+                const opponent = room.player1 === socket ? room.player2 : room.player1;
+                if (opponent) {
+                    (0, utils_1.safeSend)(opponent, {
+                        type: game_1.ERROR,
+                        payload: { message: "Opponent disconnected" }
+                    });
+                }
+                state.rooms.delete(roomId);
             }
         });
+        // Clean up rate limiting and video calls
+        moveRateLimit.delete(socket.toString());
+        roomCreationLimit.delete(socket.toString());
+        if ('videoCalls' in state) {
+            const stateWithVideo = state;
+            stateWithVideo.videoCalls.forEach((call, callId) => {
+                if (call.initiator === socket || call.receiver === socket) {
+                    stateWithVideo.videoCalls.delete(callId);
+                }
+            });
+        }
+        if (state.pendingUser === socket) {
+            state.pendingUser = null;
+        }
+        console.log(`User disconnected. Total users: ${state.users.length}`);
     }
-    if (state.pendingUser === socket) {
-        state.pendingUser = null;
+    finally {
+        isProcessingState = false;
     }
-    console.log(`User disconnected. Total users: ${state.users.length}`);
 }
 /**
  * Handles the INIT_GAME message - traditional multiplayer matchmaking
  */
 async function handleInitGame(state, socket) {
+    // Validate that the socket has a userId (is authenticated)
+    if (!socket.userId) {
+        (0, utils_1.safeSend)(socket, {
+            type: game_1.ERROR,
+            payload: { message: "Authentication required" }
+        });
+        return;
+    }
     console.log(`INIT_GAME request. Pending user: ${state.pendingUser ? 'exists' : 'none'}`);
     if (!state.pendingUser) {
         state.pendingUser = socket;
@@ -157,6 +223,15 @@ async function handleInitGame(state, socket) {
  * Handles the SINGLE_PLAYER message - starts a single player game vs AI
  */
 function handleSinglePlayer(state, socket) {
+    // Validate that the socket has a userId (is authenticated)
+    const socketWithUserId = socket;
+    if (!socketWithUserId.userId) {
+        (0, utils_1.safeSend)(socket, {
+            type: game_1.ERROR,
+            payload: { message: "Authentication required" }
+        });
+        return;
+    }
     const game = {
         player: socket,
         board: new chess_js_1.Chess(),
@@ -172,6 +247,15 @@ function handleSinglePlayer(state, socket) {
  * Handles the CREATE_ROOM message - creates a new room for multiplayer
  */
 function handleCreateRoom(state, socket) {
+    // Validate that the socket has a userId (is authenticated)
+    const socketWithUserId = socket;
+    if (!socketWithUserId.userId) {
+        (0, utils_1.safeSend)(socket, {
+            type: game_1.ERROR,
+            payload: { message: "Authentication required" }
+        });
+        return;
+    }
     const socketKey = socket.toString();
     const now = Date.now();
     const lastCreation = roomCreationLimit.get(socketKey) || 0;
@@ -201,6 +285,14 @@ function handleCreateRoom(state, socket) {
  * Handles the JOIN_ROOM message - joins an existing room
  */
 async function handleJoinRoom(state, socket, roomId) {
+    // Validate that the socket has a userId (is authenticated)
+    if (!socket.userId) {
+        (0, utils_1.safeSend)(socket, {
+            type: game_1.ERROR,
+            payload: { message: "Authentication required" }
+        });
+        return;
+    }
     const room = state.rooms.get(roomId);
     if (!room) {
         socket.send(JSON.stringify({
@@ -252,6 +344,15 @@ async function handleJoinRoom(state, socket, roomId) {
  * Handles the MOVE message - processes moves for both multiplayer and single player games
  */
 async function handleMove(state, socket, move) {
+    // Validate that the socket has a userId (is authenticated)
+    const socketWithUserId = socket;
+    if (!socketWithUserId.userId) {
+        (0, utils_1.safeSend)(socket, {
+            type: game_1.ERROR,
+            payload: { message: "Authentication required" }
+        });
+        return;
+    }
     const playerId = socket.toString();
     const now = Date.now();
     const lastMove = moveRateLimit.get(playerId) || 0;
@@ -265,6 +366,16 @@ async function handleMove(state, socket, move) {
     moveRateLimit.set(playerId, now);
     let multiplayerGame = state.games.find(game => game.player1 === socket || game.player2 === socket);
     if (multiplayerGame) {
+        // Validate that the user is actually a player in this game
+        const isPlayer1 = multiplayerGame.player1 === socket;
+        const isPlayer2 = multiplayerGame.player2 === socket;
+        if (!isPlayer1 && !isPlayer2) {
+            (0, utils_1.safeSend)(socket, {
+                type: game_1.ERROR,
+                payload: { message: "You are not a player in this game" }
+            });
+            return;
+        }
         // Only allow moves if both players are present
         if (!multiplayerGame.player1 || !multiplayerGame.player2) {
             (0, utils_1.safeSend)(socket, {
@@ -283,6 +394,19 @@ async function handleMove(state, socket, move) {
                     payload: { message: "Not your turn" }
                 });
                 return;
+            }
+            // Pawn promotion validation
+            const piece = multiplayerGame.board.get(move.from);
+            const isPawn = piece?.type === 'p';
+            const isLastRank = (piece?.color === 'w' && move.to[1] === '8') || (piece?.color === 'b' && move.to[1] === '1');
+            if (isPawn && isLastRank) {
+                if (!move.promotion || !['q', 'r', 'b', 'n'].includes(move.promotion)) {
+                    (0, utils_1.safeSend)(socket, {
+                        type: game_1.ERROR,
+                        payload: { message: "Promotion required: choose queen, rook, bishop, or knight." }
+                    });
+                    return;
+                }
             }
             // Validate move without mutating board
             const testBoard = new chess_js_1.Chess(multiplayerGame.board.fen());
@@ -352,8 +476,21 @@ async function handleMove(state, socket, move) {
     const singlePlayerGame = state.singlePlayerGames.find(game => game.player === socket);
     if (singlePlayerGame) {
         try {
+            const piece = singlePlayerGame.board.get(move.from);
+            const isPawn = piece?.type === 'p';
+            const isLastRank = (piece?.color === 'w' && move.to[1] === '8') || (piece?.color === 'b' && move.to[1] === '1');
+            if (isPawn && isLastRank) {
+                if (!move.promotion || !['q', 'r', 'b', 'n'].includes(move.promotion)) {
+                    (0, utils_1.safeSend)(socket, {
+                        type: game_1.ERROR,
+                        payload: { message: "Promotion required: choose queen, rook, bishop, or knight." }
+                    });
+                    return;
+                }
+            }
             const legalMoves = singlePlayerGame.board.moves({ square: move.from, verbose: true });
-            const isLegalMove = legalMoves.some((legalMove) => legalMove.from === move.from && legalMove.to === move.to);
+            const isLegalMove = legalMoves.some((legalMove) => legalMove.from === move.from && legalMove.to === move.to &&
+                (!isPawn || !isLastRank || legalMove.promotion === move.promotion));
             if (!isLegalMove) {
                 (0, utils_1.safeSend)(socket, {
                     type: game_1.ERROR,
@@ -611,14 +748,14 @@ function setupMessageHandler(state, socket) {
     socket.on("message", async (data) => {
         await handleMessage(state, socket, data);
     });
-    socket.on('close', async () => {
-        await handleEndGame(state, socket);
+    socket.on('close', () => {
         removeUser(state, socket);
     });
 }
 async function resumeActiveGameForUser(state, ws) {
     if (!ws.userId)
         return;
+    console.log('🔄 Attempting to resume game for user:', ws.userId);
     try {
         const dbGame = await prisma_1.prisma.game.findFirst({
             where: {
@@ -629,8 +766,11 @@ async function resumeActiveGameForUser(state, ws) {
                 ]
             }
         });
-        if (!dbGame)
+        if (!dbGame) {
+            console.log('❌ No active game found for user:', ws.userId);
             return;
+        }
+        console.log('✅ Found active game:', dbGame.id);
         const dbMoves = await prisma_1.prisma.move.findMany({
             where: { gameId: dbGame.id },
             orderBy: { moveNum: 'asc' }
@@ -646,7 +786,9 @@ async function resumeActiveGameForUser(state, ws) {
         const isBlack = dbGame.playerBlackId === ws.userId;
         const otherUserId = isWhite ? dbGame.playerBlackId : dbGame.playerWhiteId;
         const otherSocket = state.users.find(u => u.userId === otherUserId);
+        console.log('👥 Other user ID:', otherUserId, 'Other socket found:', !!otherSocket);
         if (!inMemoryGame) {
+            console.log('🆕 Creating new in-memory game');
             inMemoryGame = {
                 player1: isWhite ? ws : (otherSocket ?? null),
                 player2: isBlack ? ws : (otherSocket ?? null),
@@ -659,6 +801,7 @@ async function resumeActiveGameForUser(state, ws) {
             state.games.push(inMemoryGame);
         }
         else {
+            console.log('🔄 Updating existing in-memory game');
             if (isWhite)
                 inMemoryGame.player1 = ws;
             if (isBlack)
@@ -667,10 +810,19 @@ async function resumeActiveGameForUser(state, ws) {
         }
         // Cancel disconnect timeout if present
         if (disconnectTimeouts.has(dbGame.id)) {
+            console.log('⏰ Cancelling disconnect timeout');
             clearTimeout(disconnectTimeouts.get(dbGame.id));
             disconnectTimeouts.delete(dbGame.id);
         }
+        // Notify the other player that opponent has reconnected
+        if (otherSocket && otherSocket.readyState === 1) {
+            console.log('📢 Notifying other player about reconnection');
+            otherSocket.send(JSON.stringify({
+                type: 'opponent_reconnected'
+            }));
+        }
         const color = isWhite ? 'white' : 'black';
+        console.log('🎮 Sending resume_game message to user:', ws.userId, 'color:', color);
         (0, utils_1.safeSend)(ws, {
             type: 'resume_game',
             payload: {
@@ -687,6 +839,15 @@ async function resumeActiveGameForUser(state, ws) {
     }
 }
 async function handleEndGame(state, socket) {
+    // Validate that the socket has a userId (is authenticated)
+    const socketWithUserId = socket;
+    if (!socketWithUserId.userId) {
+        (0, utils_1.safeSend)(socket, {
+            type: game_1.ERROR,
+            payload: { message: "Authentication required" }
+        });
+        return;
+    }
     // Find the active game for this socket
     const gameIdx = state.games.findIndex(g => g.player1 === socket || g.player2 === socket);
     if (gameIdx === -1)
@@ -710,5 +871,14 @@ function validateRoomId(roomId) {
     return typeof roomId === 'string' &&
         roomId.length === 6 &&
         /^[A-Z0-9]+$/.test(roomId);
+}
+// Cleanup function to clear all timeouts (call this when server shuts down)
+function cleanupAllTimeouts() {
+    console.log('🧹 Cleaning up all timeouts');
+    for (const [gameId, timeout] of disconnectTimeouts.entries()) {
+        clearTimeout(timeout);
+        console.log(`Cleared timeout for game: ${gameId}`);
+    }
+    disconnectTimeouts.clear();
 }
 //# sourceMappingURL=game-manager.js.map

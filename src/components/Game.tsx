@@ -49,6 +49,12 @@ export const Game = () => {
     const [incomingCall, setIncomingCall] = useState<{ callId: string; from: string } | null>(null);
     const [opponentId] = useState<string>('opponent');
     const [moveCount, setMoveCount] = useState(0);
+    const [isLoading, setIsLoading] = useState(true);
+    const [hasCheckedResume, setHasCheckedResume] = useState(false);
+    const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const [opponentDisconnected, setOpponentDisconnected] = useState(false);
+    const [disconnectTimer, setDisconnectTimer] = useState<number>(0);
+    const disconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     const {
         videoCallState,
@@ -61,7 +67,44 @@ export const Game = () => {
         handleVideoMessage,
         localVideoRef,
         remoteVideoRef
-    } = useVideoCall(socket, 'player');
+    } = useVideoCall(socket, 'player', setErrorMessage);
+
+    useEffect(() => {
+        setIsLoading(true);
+        setHasCheckedResume(false);
+        // Fallback: if no server response in 5s, stop loading
+        if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = setTimeout(() => {
+            setIsLoading(false);
+            setHasCheckedResume(true);
+        }, 5000);
+        return () => {
+            if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
+        };
+    }, [socket]);
+
+    // Cleanup disconnect timer on unmount
+    useEffect(() => {
+        return () => {
+            if (disconnectTimerRef.current) {
+                clearInterval(disconnectTimerRef.current);
+            }
+        };
+    }, []);
+
+    // Handle timer expiration
+    useEffect(() => {
+        console.log('⏰ Timer effect triggered:', { disconnectTimer, opponentDisconnected });
+        if (disconnectTimer === 0 && opponentDisconnected) {
+            console.log('⏰ Timer expired, ending game');
+            setOpponentDisconnected(false);
+            setErrorMessage('Game ended due to opponent disconnection.');
+            setTimeout(() => setErrorMessage(null), 3000);
+            resetGame();
+        }
+    }, [disconnectTimer, opponentDisconnected]);
+
+
 
     useEffect(() => {
         if (!socket) return;
@@ -90,6 +133,8 @@ export const Game = () => {
 
                 switch (message.type) {
                     case INIT_GAME:
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
                         setStarted(true);
                         setPlayerColor(message.payload.color);
                         setWaitingForOpponent(false);
@@ -110,6 +155,9 @@ export const Game = () => {
                         }
                         break;
                     case 'resume_game': {
+                        console.log('📱 Frontend received resume_game message:', message.payload);
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
                         const { color, fen, moveHistory, opponentConnected, waitingForOpponent } = message.payload;
                         const chess = new Chess();
                         if (fen) {
@@ -126,9 +174,12 @@ export const Game = () => {
                         setOpponentConnected(!!opponentConnected);
                         setMoveCount(moveHistory ? moveHistory.length : 0);
                         setGameMode('multiplayer');
+                        console.log('✅ Game resumed successfully');
                         break;
                     }
                     case GAME_OVER:
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
                         const winner = message.payload.winner;
                         const reason = message.payload.reason;
                         let gameOverMessage = '';
@@ -143,27 +194,99 @@ export const Game = () => {
                         // Don't auto-clear game over messages
                         break;
                     case ERROR:
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
                         setErrorMessage(message.payload.message);
                         setTimeout(() => setErrorMessage(null), 3000);
                         break;
                     case WAITING_FOR_OPPONENT:
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
                         setWaitingForOpponent(true);
                         break;
                     case ROOM_CREATED:
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
                         setCreatedRoomId(message.payload.roomId);
                         setWaitingForOpponent(true);
                         break;
                     case ROOM_JOINED:
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
                         setStarted(true);
                         setPlayerColor(message.payload.color);
                         setWaitingForOpponent(false);
                         break;
                     case ROOM_NOT_FOUND:
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
                         setErrorMessage(message.payload.message);
                         setTimeout(() => setErrorMessage(null), 3000);
                         break;
                     case 'opponent_left':
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
                         setErrorMessage('Opponent left the match.');
+                        setTimeout(() => setErrorMessage(null), 3000);
+                        resetGame();
+                        break;
+                    case 'opponent_disconnected':
+                        console.log('📱 Frontend received opponent_disconnected message');
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
+                        setOpponentDisconnected(true);
+                        setDisconnectTimer(60); // 60 seconds = 1 minute
+                        console.log('⏰ Timer started at 60 seconds');
+                        
+                        // Clear any existing timer before starting a new one
+                        if (disconnectTimerRef.current) {
+                            clearInterval(disconnectTimerRef.current);
+                            disconnectTimerRef.current = null;
+                        }
+                        
+                        // Start countdown timer
+                        disconnectTimerRef.current = setInterval(() => {
+                            setDisconnectTimer(prev => {
+                                console.log('⏰ Timer tick:', prev, '->', prev - 1);
+                                if (prev <= 0) {
+                                    // Timer expired, game will end
+                                    console.log('⏰ Timer expired!');
+                                    if (disconnectTimerRef.current) {
+                                        clearInterval(disconnectTimerRef.current);
+                                        disconnectTimerRef.current = null;
+                                    }
+                                    return 0;
+                                }
+                                return prev - 1;
+                            });
+                        }, 1000);
+                        break;
+                    case 'opponent_reconnected':
+                        console.log('📱 Frontend received opponent_reconnected message');
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
+                        setOpponentDisconnected(false);
+                        setDisconnectTimer(0);
+                        
+                        // Clear the disconnect timer
+                        if (disconnectTimerRef.current) {
+                            clearInterval(disconnectTimerRef.current);
+                            disconnectTimerRef.current = null;
+                        }
+                        break;
+                    case 'game_ended_disconnect':
+                        setIsLoading(false);
+                        setHasCheckedResume(true);
+                        setOpponentDisconnected(false);
+                        setDisconnectTimer(0);
+                        
+                        // Clear the disconnect timer
+                        if (disconnectTimerRef.current) {
+                            clearInterval(disconnectTimerRef.current);
+                            disconnectTimerRef.current = null;
+                        }
+                        
+                        setErrorMessage('Game ended due to opponent disconnection.');
                         setTimeout(() => setErrorMessage(null), 3000);
                         resetGame();
                         break;
@@ -223,6 +346,14 @@ export const Game = () => {
         setRoomId('');
         setCreatedRoomId('');
         setWaitingForOpponent(false);
+        setOpponentDisconnected(false);
+        setDisconnectTimer(0);
+        
+        // Clear disconnect timer
+        if (disconnectTimerRef.current) {
+            clearInterval(disconnectTimerRef.current);
+            disconnectTimerRef.current = null;
+        }
     };
 
     const handleStartVideoCall = () => {
@@ -275,8 +406,22 @@ export const Game = () => {
     const isPlayerTurn = playerColor === currentTurn;
     const moveHistory = chessRef.current.history();
 
-    // Game Menu
-    if (gameMode === 'menu') {
+    if (isLoading) {
+        return (
+            <div className="h-screen flex justify-center items-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+                <Card className="w-96">
+                    <CardHeader>
+                        <CardTitle className="text-center">Loading game...</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500 mx-auto"></div>
+                    </CardContent>
+                </Card>
+            </div>
+        );
+    }
+
+    if (hasCheckedResume && gameMode === 'menu') {
         return (
             <div className="h-screen flex justify-center items-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
                 <Card className="w-96 bg-white/10 backdrop-blur-lg border-white/20">
@@ -318,7 +463,6 @@ export const Game = () => {
         );
     }
 
-    // Waiting for opponent screen
     if (waitingForOpponent && !started) {
         return (
             <div className="h-screen flex justify-center items-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
@@ -353,10 +497,8 @@ export const Game = () => {
         );
     }
 
-    // Main Game Screen
     return (
         <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-2 overflow-hidden">
-            {/* Error Popup */}
             {errorMessage && (
                 <div className="fixed top-2 right-2 z-50">
                     <Card className="bg-red-600 border-red-500 text-white">
@@ -370,7 +512,6 @@ export const Game = () => {
                 </div>
             )}
 
-            {/* Incoming Call Notification */}
             {incomingCall && (
                 <div className="fixed top-2 left-2 z-50">
                     <Card className="bg-blue-600 border-blue-500 text-white">
@@ -399,15 +540,15 @@ export const Game = () => {
             )}
             
             <div className="h-full max-w-7xl mx-auto flex flex-col">
-                {/* Main Game Area */}
-                <div className={`flex gap-4 ${videoCallState.isInCall ? 'flex-1' : 'flex-1'}`}>
-                    {/* Chess Board - Centered */}
+                {/* Desktop Layout: Board and Info Side by Side */}
+                <div className="hidden md:flex gap-4 flex-1">
                     <div className="flex-1 flex justify-center items-start">
                         {waitingForOpponent || !opponentConnected ? (
                             <div className="p-4 text-center text-lg font-semibold text-yellow-700 bg-yellow-100 rounded-lg mb-4">
                                 Waiting for opponent to connect...
                             </div>
                         ) : null}
+                        <div className="flex flex-col items-center">
                         <div className={`bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 ${
                             videoCallState.isInCall ? 'p-3' : 'p-4'
                         }`}>
@@ -417,20 +558,45 @@ export const Game = () => {
                                 playerColor={playerColor}
                                 moveCount={moveCount}
                                 isVideoCallActive={videoCallState.isInCall}
-                                disableMoves={waitingForOpponent || !opponentConnected}
+                                    disableMoves={waitingForOpponent || !opponentConnected || opponentDisconnected}
+                                    setErrorMessage={setErrorMessage}
                             />
+                            </div>
+                            
+                            {/* Video Call Button - Only show when not in call */}
+                            {started && gameMode !== 'single_player' && !videoCallState.isInCall && (
+                                <div className="mt-4">
+                                    <VideoCallButton
+                                        onClick={handleStartVideoCall}
+                                        disabled={!started}
+                                        isInCall={false}
+                                        className="w-48"
+                                    />
+                                </div>
+                            )}
                         </div>
                     </div>
                     
-                    {/* Game Info Panel - Compact */}
                     <div className={`space-y-2 ${videoCallState.isInCall ? 'w-60' : 'w-72'}`}>
-                        {/* Game Status */}
                         <Card className="bg-white/10 backdrop-blur-lg border-white/20">
                             <CardHeader className="pb-1">
                                 <CardTitle className="text-white text-center text-sm">Game Status</CardTitle>
                             </CardHeader>
                             <CardContent className="pt-0">
                                 <div className="text-center">
+                                    {opponentDisconnected ? (
+                                        <div className="space-y-2">
+                                            <Badge variant="danger" className="text-sm px-3 py-1">
+                                                Opponent Disconnected
+                                            </Badge>
+                                            <div className="text-white text-lg font-bold">
+                                                {Math.floor(disconnectTimer / 60)}:{(disconnectTimer % 60).toString().padStart(2, '0')}
+                                            </div>
+                                            <div className="text-gray-400 text-xs">
+                                                Reconnecting... Game will end in {disconnectTimer} seconds
+                                            </div>
+                                        </div>
+                                    ) : (
                                     <Badge 
                                         variant={isPlayerTurn ? "success" : "secondary"}
                                         className="text-sm px-3 py-1"
@@ -440,11 +606,11 @@ export const Game = () => {
                                             (isPlayerTurn ? 'Your Turn' : "Opponent's Turn")
                                         }
                                     </Badge>
+                                    )}
                                 </div>
                             </CardContent>
                         </Card>
                         
-                        {/* Player Info - Combined */}
                         <Card className="bg-white/10 backdrop-blur-lg border-white/20">
                             <CardHeader className="pb-1">
                                 <CardTitle className="text-white text-xs">Game Info:</CardTitle>
@@ -465,29 +631,8 @@ export const Game = () => {
                             </CardContent>
                         </Card>
                         
-                        {/* Video Call Button */}
-                        {started && gameMode !== 'single_player' && (
-                            <Card className="bg-white/10 backdrop-blur-lg border-white/20">
-                                <CardHeader className="pb-1">
-                                    <CardTitle className="text-white text-xs">Video Call:</CardTitle>
-                                </CardHeader>
-                                <CardContent className="pt-0">
-                                    <VideoCallButton
-                                        onClick={videoCallState.isInCall ? endCall : handleStartVideoCall}
-                                        disabled={!started}
-                                        isInCall={videoCallState.isInCall}
-                                        className="w-full"
-                                    />
-                                    {videoCallState.isInCall && (
-                                        <div className="mt-1 text-xs text-gray-400 text-center">
-                                            {videoCallState.isCallActive ? 'Call Active' : 'Connecting...'}
-                                        </div>
-                                    )}
-                                </CardContent>
-                            </Card>
-                        )}
+
                         
-                        {/* Move History */}
                         <Card className="bg-white/10 backdrop-blur-lg border-white/20">
                             <CardHeader className="pb-1">
                                 <CardTitle className="text-white text-xs">Move History:</CardTitle>
@@ -512,7 +657,6 @@ export const Game = () => {
                             </CardContent>
                         </Card>
                         
-                        {/* Game State Indicators */}
                         {chessRef.current.isCheckmate() && (
                             <Card className="bg-red-600 border-red-500">
                                 <CardContent className="p-2 text-center">
@@ -558,10 +702,104 @@ export const Game = () => {
                         <Button onClick={resetGame} variant="outline" className="w-full border-white/20 text-white hover:bg-white/10">
                             New Game
                         </Button>
+                        
+                        {started && gameMode === 'multiplayer' && (
+                            <Button onClick={endGame} variant="danger" className="w-full">
+                                End Game
+                            </Button>
+                        )}
                     </div>
                 </div>
 
-                {/* Video Call Section Below Chess Board - Only when in call */}
+                {/* Mobile Layout: Board on top, Info below */}
+                <div className="md:hidden flex flex-col h-full">
+                    {/* Chess Board - Takes most space */}
+                    <div className="flex-1 flex flex-col justify-center items-center p-2">
+                        {waitingForOpponent || !opponentConnected ? (
+                            <div className="p-4 text-center text-lg font-semibold text-yellow-700 bg-yellow-100 rounded-lg mb-4">
+                                Waiting for opponent to connect...
+                            </div>
+                        ) : null}
+                        <div className="bg-white/10 backdrop-blur-lg rounded-xl border border-white/20 p-2">
+                            <ChessBoard 
+                                chess={chessRef.current} 
+                                socket={socket} 
+                                playerColor={playerColor}
+                                moveCount={moveCount}
+                                isVideoCallActive={videoCallState.isInCall}
+                                disableMoves={waitingForOpponent || !opponentConnected || opponentDisconnected}
+                                setErrorMessage={setErrorMessage}
+                            />
+                        </div>
+                        
+                        {/* Video Call Button - Only show when not in call */}
+                        {started && gameMode !== 'single_player' && !videoCallState.isInCall && (
+                            <div className="mt-4">
+                                <VideoCallButton
+                                    onClick={handleStartVideoCall}
+                                    disabled={!started}
+                                    isInCall={false}
+                                    className="w-full max-w-xs"
+                                />
+                            </div>
+                        )}
+                    </div>
+                    
+                    {/* Game Info - Compact mobile layout */}
+                    <div className="flex-shrink-0 p-2">
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                            <Card className="bg-white/10 backdrop-blur-lg border-white/20">
+                                <CardContent className="p-2">
+                                    <div className="text-center">
+                                        {opponentDisconnected ? (
+                                            <div className="space-y-1">
+                                                <Badge variant="danger" className="text-xs px-2 py-1">
+                                                    Opponent Disconnected
+                                                </Badge>
+                                                <div className="text-white text-sm font-bold">
+                                                    {Math.floor(disconnectTimer / 60)}:{(disconnectTimer % 60).toString().padStart(2, '0')}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <Badge 
+                                                variant={isPlayerTurn ? "success" : "secondary"}
+                                                className="text-xs px-2 py-1"
+                                            >
+                                                {gameMode === 'single_player' ? 
+                                                    (isPlayerTurn ? 'Your Turn' : "AI's Turn") : 
+                                                    (isPlayerTurn ? 'Your Turn' : "Opponent's Turn")
+                                                }
+                                            </Badge>
+                                        )}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                            
+                            <Card className="bg-white/10 backdrop-blur-lg border-white/20">
+                                <CardContent className="p-2">
+                                    <div className="text-center text-xs">
+                                        <div className="text-gray-300">You are:</div>
+                                        <div className={`font-bold ${playerColor === 'white' ? 'text-white' : 'text-gray-300'}`}>
+                                            {playerColor === 'white' ? '⚪ White' : '⚫ Black'}
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+                        
+                        <Button onClick={resetGame} variant="outline" className="w-full border-white/20 text-white hover:bg-white/10 text-sm">
+                            New Game
+                        </Button>
+                        
+                        {started && gameMode === 'multiplayer' && (
+                            <Button onClick={endGame} variant="danger" className="w-full text-sm">
+                                End Game
+                            </Button>
+                        )}
+                    </div>
+                </div>
+
+                {/* Video Call Section - Responsive */}
                 {videoCallState.isInCall && (
                     <div className="mt-2">
                         <Card className="bg-white/10 backdrop-blur-lg border-white/20">
@@ -573,7 +811,6 @@ export const Game = () => {
                             </CardHeader>
                             <CardContent className="pt-0">
                                 <div className="flex justify-center space-x-2">
-                                    {/* Remote Video */}
                                     <div className="relative">
                                         <video
                                             ref={remoteVideoRef}
@@ -592,7 +829,6 @@ export const Game = () => {
                                         )}
                                     </div>
                                     
-                                    {/* Local Video */}
                                     <div className="relative">
                                         <video
                                             ref={localVideoRef}
@@ -609,7 +845,6 @@ export const Game = () => {
                                     </div>
                                 </div>
                                 
-                                {/* Video Controls */}
                                 <div className="flex justify-center space-x-2 mt-2">
                                     <Button
                                         onClick={toggleMute}
@@ -643,14 +878,7 @@ export const Game = () => {
                     </div>
                 )}
 
-                {/* End Game Button */}
-                {started && gameMode === 'multiplayer' && (
-                    <div className="absolute top-4 left-4 z-40">
-                        <Button onClick={endGame} variant="danger" size="lg">
-                            End Game
-                        </Button>
-                    </div>
-                )}
+
             </div>
         </div>
     );

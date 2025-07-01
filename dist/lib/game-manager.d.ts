@@ -58,4 +58,5 @@ export declare function setupMessageHandler(state: GameState & {
 export declare function resumeActiveGameForUser(state: GameState, ws: WebSocketWithUserId): Promise<void>;
 export declare function handleEndGame(state: GameState, socket: ServerWebSocket): Promise<void>;
 export declare function validateRoomId(roomId: string): boolean;
+export declare function cleanupAllTimeouts(): void;
 //# sourceMappingURL=game-manager.d.ts.map

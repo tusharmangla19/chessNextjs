@@ -22,6 +22,7 @@ export declare const ICE_CANDIDATE = "ice_candidate";
 export interface Move {
     from: string;
     to: string;
+    promotion?: 'q' | 'r' | 'b' | 'n';
 }
 export interface GameOverPayload {
     winner: string | null;

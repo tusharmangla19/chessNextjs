@@ -17,7 +17,7 @@ const loadSimplePeer = async () => {
   return SimplePeer;
 };
 
-export const useVideoCall = (socket: WebSocket | null, userId: string) => {
+export const useVideoCall = (socket: WebSocket | null, userId: string, setErrorMessage?: (msg: string) => void) => {
   const [videoCallState, setVideoCallState] = useState<VideoCallState>({
     isInCall: false,
     isCallActive: false,
@@ -49,9 +49,10 @@ export const useVideoCall = (socket: WebSocket | null, userId: string) => {
       return stream;
     } catch (error) {
       console.error('Error accessing media devices:', error);
+      if (setErrorMessage) setErrorMessage('Could not access camera or microphone.');
       throw error;
     }
-  }, []);
+  }, [setErrorMessage]);
 
   // Create peer connection
   const createPeer = useCallback(async (initiator: boolean, stream: MediaStream, callId: string, opponentId: string) => {
@@ -105,6 +106,7 @@ export const useVideoCall = (socket: WebSocket | null, userId: string) => {
 
     peer.on('error', (error: Error) => {
       console.error('Peer connection error:', error);
+      if (setErrorMessage) setErrorMessage('Video call connection failed.');
       if (peerRef.current) {
         peerRef.current.destroy();
         peerRef.current = null;
@@ -118,7 +120,7 @@ export const useVideoCall = (socket: WebSocket | null, userId: string) => {
 
     peerRef.current = peer;
     return peer;
-  }, [socket, userId]);
+  }, [socket, userId, setErrorMessage]);
 
   // Start a video call
   const startCall = useCallback(async (opponentId: string) => {
@@ -168,8 +170,9 @@ export const useVideoCall = (socket: WebSocket | null, userId: string) => {
 
     } catch (error) {
       console.error('Error starting call:', error);
+      if (setErrorMessage) setErrorMessage('Failed to start video call.');
     }
-  }, [initializeLocalStream, createPeer, socket, userId]);
+  }, [initializeLocalStream, createPeer, socket, userId, setErrorMessage]);
 
   // Accept incoming call
   const acceptCall = useCallback(async (callId: string, initiatorId: string) => {
@@ -193,6 +196,7 @@ export const useVideoCall = (socket: WebSocket | null, userId: string) => {
       }
     } catch (error) {
       console.error('Error accepting call:', error);
+      if (setErrorMessage) setErrorMessage('Failed to accept video call.');
       if (socket) {
         const message: VideoCallMessage = {
           type: 'video_call_rejected',
@@ -203,7 +207,7 @@ export const useVideoCall = (socket: WebSocket | null, userId: string) => {
         socket.send(JSON.stringify(message));
       }
     }
-  }, [socket, userId]);
+  }, [socket, userId, setErrorMessage]);
 
   // Reject incoming call
   const rejectCall = useCallback((callId: string, initiatorId: string) => {
@@ -263,7 +267,7 @@ export const useVideoCall = (socket: WebSocket | null, userId: string) => {
       };
       socket.send(JSON.stringify(message));
     }
-  }, [socket, userId, videoCallState.callId, videoCallState.opponentId, videoCallState.localStream, videoCallState.remoteStream]);
+  }, [socket, userId, videoCallState.callId, videoCallState.opponentId]);
 
   // Toggle mute
   const toggleMute = useCallback(() => {

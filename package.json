@@ -9,7 +9,7 @@
     "lint": "next lint",
     "build-server": "tsc -p tsconfig.server.json",
     "start-server": "node websocket-server.js",
-    "dev-full": "concurrently \"npm run build-server\" \"npm run start-server\" \"npm run dev\""
+    "dev-full": "concurrently --kill-others-on-fail --handle-input \"npm run build-server\" \"npm run start-server\" \"npm run dev\""
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.32.2",

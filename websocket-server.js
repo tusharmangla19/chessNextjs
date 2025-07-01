@@ -1,5 +1,5 @@
 const { WebSocketServer } = require('ws');
-const { createGameState, addUser, removeUser, setupMessageHandler, resumeActiveGameForUser } = require('./dist/lib/game-manager');
+const { createGameState, addUser, removeUser, setupMessageHandler, resumeActiveGameForUser, cleanupAllTimeouts } = require('./dist/lib/game-manager');
 const { prisma } = require('./dist/lib/prisma');
 
 const wss = new WebSocketServer({ port: 8081 });
@@ -36,12 +36,51 @@ wss.on('connection', (ws) => {
             console.error('WebSocket message error:', err);
         }
     });
+});
 
-    ws.on('close', () => {
-        if (authenticated) {
-            removeUser(state, ws);
-        }
+// Handle graceful shutdown
+process.on('SIGINT', () => {
+    console.log('🛑 Received SIGINT, shutting down gracefully...');
+    cleanupAllTimeouts();
+    
+    // Close all WebSocket connections first
+    wss.clients.forEach(client => {
+        client.close();
     });
+    
+    // Close the server with a timeout
+    wss.close(() => {
+        console.log('✅ WebSocket server closed');
+        process.exit(0);
+    });
+    
+    // Force exit after 5 seconds if graceful shutdown fails
+    setTimeout(() => {
+        console.log('⚠️ Force exiting after timeout');
+        process.exit(1);
+    }, 5000);
+});
+
+process.on('SIGTERM', () => {
+    console.log('🛑 Received SIGTERM, shutting down gracefully...');
+    cleanupAllTimeouts();
+    
+    // Close all WebSocket connections first
+    wss.clients.forEach(client => {
+        client.close();
+    });
+    
+    // Close the server with a timeout
+    wss.close(() => {
+        console.log('✅ WebSocket server closed');
+        process.exit(0);
+    });
+    
+    // Force exit after 5 seconds if graceful shutdown fails
+    setTimeout(() => {
+        console.log('⚠️ Force exiting after timeout');
+        process.exit(1);
+    }, 5000);
 });
 
 console.log('✅ WebSocket server started on port 8081'); 
