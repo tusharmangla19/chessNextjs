@@ -1,8 +1,8 @@
 const { WebSocketServer } = require('ws');
 const { createGameState, addUser, removeUser, setupMessageHandler, resumeActiveGameForUser, cleanupAllTimeouts } = require('./dist/lib/state-manager');
 const { prisma } = require('./dist/lib/prisma');
-
-const wss = new WebSocketServer({ port: process.env.PORT });
+const port = process.env.PORT || 8081;
+const wss = new WebSocketServer({ port });
 const state = createGameState();
 
 wss.on('connection', (ws) => {
