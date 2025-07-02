@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react"
 import { useUser } from '@clerk/nextjs';
 
-const WS_URL = "ws://localhost:8081";
+const WS_URL = "ws://carefree-reverence-production.up.railway.app";
 
 export const useSocket = () => {
     const [socket, setSocket] = useState<WebSocket | null>(null);
