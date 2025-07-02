@@ -4,6 +4,7 @@ import { Chess } from 'chess.js';
 import { prisma } from './prisma';
 import { safeSend } from './utils';
 import { MOVE, ERROR, GAME_OVER } from '../types/game';
+import { Prisma } from '@prisma/client';
 
 export async function handleMove(state: GameState, socket: ServerWebSocket, move: Move): Promise<void> {
     if (!validateAuthentication(socket)) return;
@@ -102,7 +103,7 @@ function validatePawnPromotion(board: Chess, move: Move): boolean {
 }
 
 async function executeMove(game: MultiplayerGame, move: Move, moveResult: any): Promise<void> {
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         game.board.move(move);
         const moveNum = game.moveCount + 1;
         const san = moveResult.san;
