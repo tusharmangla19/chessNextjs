@@ -15,6 +15,8 @@ export const ROOM_CREATED = "room_created";
 export const ROOM_JOINED = "room_joined";
 export const ROOM_NOT_FOUND = "room_not_found";
 export const WAITING_FOR_OPPONENT = "waiting_for_opponent";
+export const CANCEL_MATCHMAKING = "cancel_matchmaking";
+export const MATCHMAKING_CANCELLED = "matchmaking_cancelled";
 
 // Video call message types
 export const VIDEO_CALL_REQUEST = "video_call_request";

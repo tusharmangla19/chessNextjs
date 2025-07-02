@@ -1,0 +1,1 @@
+{"version":3,"file":"game-end.d.ts","sourceRoot":"","sources":["../../src/lib/game-end.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,SAAS,EAAE,eAAe,EAAE,MAAM,eAAe,CAAC;AAShE,wBAAsB,aAAa,CAAC,KAAK,EAAE,SAAS,EAAE,MAAM,EAAE,eAAe,GAAG,OAAO,CAAC,IAAI,CAAC,CAc5F;AAED,wBAAgB,kBAAkB,IAAI,IAAI,CAKzC;AAED,wBAAgB,uBAAuB,CAAC,KAAK,EAAE,SAAS,EAAE,MAAM,EAAE,eAAe,GAAG,IAAI,CAMvF"}

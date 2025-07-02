@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ICE_CANDIDATE = exports.VIDEO_ANSWER = exports.VIDEO_OFFER = exports.VIDEO_CALL_ENDED = exports.VIDEO_CALL_REJECTED = exports.VIDEO_CALL_ACCEPTED = exports.VIDEO_CALL_REQUEST = exports.WAITING_FOR_OPPONENT = exports.ROOM_NOT_FOUND = exports.ROOM_JOINED = exports.ROOM_CREATED = exports.JOIN_ROOM = exports.CREATE_ROOM = exports.SINGLE_PLAYER = exports.ERROR = exports.GAME_OVER = exports.MOVE = exports.INIT_GAME = void 0;
+exports.ICE_CANDIDATE = exports.VIDEO_ANSWER = exports.VIDEO_OFFER = exports.VIDEO_CALL_ENDED = exports.VIDEO_CALL_REJECTED = exports.VIDEO_CALL_ACCEPTED = exports.VIDEO_CALL_REQUEST = exports.MATCHMAKING_CANCELLED = exports.CANCEL_MATCHMAKING = exports.WAITING_FOR_OPPONENT = exports.ROOM_NOT_FOUND = exports.ROOM_JOINED = exports.ROOM_CREATED = exports.JOIN_ROOM = exports.CREATE_ROOM = exports.SINGLE_PLAYER = exports.ERROR = exports.GAME_OVER = exports.MOVE = exports.INIT_GAME = void 0;
 // Message types
 exports.INIT_GAME = "init_game";
 exports.MOVE = "move";
@@ -13,6 +13,8 @@ exports.ROOM_CREATED = "room_created";
 exports.ROOM_JOINED = "room_joined";
 exports.ROOM_NOT_FOUND = "room_not_found";
 exports.WAITING_FOR_OPPONENT = "waiting_for_opponent";
+exports.CANCEL_MATCHMAKING = "cancel_matchmaking";
+exports.MATCHMAKING_CANCELLED = "matchmaking_cancelled";
 // Video call message types
 exports.VIDEO_CALL_REQUEST = "video_call_request";
 exports.VIDEO_CALL_ACCEPTED = "video_call_accepted";

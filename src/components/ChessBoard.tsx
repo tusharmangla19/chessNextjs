@@ -110,7 +110,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({ chess, socket, moveCount
         if (!from) {
             // No piece selected yet - select this piece if it's the player's
             if (isPlayerPiece) {
-                setFrom(squareRepresentation);
+            setFrom(squareRepresentation);
             }
         } else {
             // A piece is already selected
